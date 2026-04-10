@@ -1,19 +1,22 @@
 [package]
 name = "ecaas-lambda"
 version = "0.1.0"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.98"
-chrono = { version = "0.4.41", default-features = false, features = ["std", "serde"]}
-hem = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "main", features = ["fhs"] }
+aws-config = "1.8.15"
+aws-sdk-dynamodb = "1.82.0"
+chrono = { version = "0.4.41", default-features = false, features = ["std", "serde"] }
+home-energy-model = { git = "https://github.com/communitiesuk/epb-home-energy-model.git", branch = "main" }
+home-energy-model-wrapper-fhs = { git = "https://github.com/communitiesuk/epb-hem-wrapper-fhs" }
 lambda_http = { version = "1.0.1", default-features = false, features = ["apigw_rest", "apigw_http"] }
 openssl = { version = "0.10.74", features = ["vendored"] }
 parking_lot = "0.12.5"
 # resolve directly from github for now
-resolve-products = { git = "https://github.com/communitiesuk/epb-ecaas-pcdb.git", branch = "0.36" }
-sentry = "0.45.0"
+resolve-products = { git = "https://github.com/communitiesuk/epb-ecaas-pcdb.git", branch = "main" }
+sentry = "0.47.0"
 serde = "1.0.228"
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 thiserror = "2.0.17"
