@@ -1,5 +1,9 @@
 version: 0.2
 
+env:
+  parameter-store:
+    GITHUB_TOKEN: "GITHUB_TOKEN"
+
 phases:
   build:
     commands:
