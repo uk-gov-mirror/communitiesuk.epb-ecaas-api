@@ -2,7 +2,6 @@ version: 0.2
 
 env:
   shell: bash
-  git-credential-helper: yes
   parameter-store:
     GITHUB_TOKEN: "GITHUB_TOKEN"
 
