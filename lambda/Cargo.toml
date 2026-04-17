@@ -25,12 +25,12 @@ tracing-subscriber = { version = "0.3.20", features = ["json"] }
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 
 [profile.release]
-# Keep line numbers for logs, but remove heavy variable/type data
+# keep line numbers for logs, but remove heavy variable/type data
 debug = 1
 # adopt unwind behaviour for panics for now (remove when we have no more panics!)
 panic = "unwind"
-# optimise for binary size, but also turn off loop vectorisation
-opt-level = "z"
+# optimise for binary size
+opt-level = "s"
 # enable link-time optimisation
 lto = true
 # use a single thread for code generation - allows maximum optimisation visibility
