@@ -30,7 +30,7 @@ debug = 1
 # adopt unwind behaviour for panics for now (remove when we have no more panics!)
 panic = "unwind"
 # optimise for binary size
-opt-level = "s"
+opt-level = 3
 # enable link-time optimisation
 lto = true
 # use a single thread for code generation - allows maximum optimisation visibility
