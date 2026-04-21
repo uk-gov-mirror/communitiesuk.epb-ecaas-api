@@ -2048,7 +2048,7 @@ dependencies = [
 [[package]]
 name = "home-energy-model-wrapper-fhs"
 version = "0.1.0"
-source = "git+https://github.com/communitiesuk/epb-hem-wrapper-fhs#918e13d64aa7df6078fd1b1497fb6c7b59339478"
+source = "git+https://github.com/communitiesuk/epb-hem-wrapper-fhs?branch=production#918e13d64aa7df6078fd1b1497fb6c7b59339478"
 dependencies = [
  "anyhow",
  "approx",
@@ -3912,7 +3912,7 @@ dependencies = [
 [[package]]
 name = "resolve-products"
 version = "0.1.0"
-source = "git+https://github.com/communitiesuk/epb-ecaas-pcdb.git?branch=main#8be53e0d7a4419036ec24c6b4022971e5c26291e"
+source = "git+https://github.com/communitiesuk/epb-ecaas-pcdb.git?branch=production#8be53e0d7a4419036ec24c6b4022971e5c26291e"
 dependencies = [
  "aws-sdk-dynamodb",
  "itertools",
