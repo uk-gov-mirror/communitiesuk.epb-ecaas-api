@@ -1,10 +1,7 @@
+use aws_config::BehaviorVersion;
+use aws_sdk_dynamodb::Client;
 use chrono::NaiveDate;
-use hem::errors::HemError;
-use hem::output::{Output, SinkOutput};
-use hem::read_weather_file::weather_data_to_vec;
-use hem::{
-    run_project, ProjectFlags, FHS_VERSION, FHS_VERSION_DATE, HEM_VERSION, HEM_VERSION_DATE,
-};
+use home_energy_model_wrapper_fhs::{run_wrappers, FhsFlags, FHS_VERSION, FHS_VERSION_DATE, HEM_VERSION, HEM_VERSION_DATE, HemError, OutputWriter, SinkOutputWriter};
 use lambda_http::aws_lambda_events::apigw::{
     ApiGatewayProxyRequestContext, ApiGatewayV2httpRequestContext,
 };
@@ -12,19 +9,45 @@ use lambda_http::request::RequestContext;
 use lambda_http::{run, service_fn, Body, Error, Request, RequestExt, Response};
 use parking_lot::Mutex;
 use resolve_products::errors::ResolvePcdbProductsError;
+use resolve_products::resolve_products;
 use sentry::ClientOptions;
 use serde::Serialize;
 use serde_json::json;
 use std::error::Error as StdError;
 use std::io;
-use std::io::{BufReader, Cursor, ErrorKind, Write};
+use std::io::{ErrorKind, Write};
 use std::str::from_utf8;
 use std::sync::Arc;
-use resolve_products::resolve_products;
 use thiserror::Error;
+use tokio::sync::OnceCell;
 use tracing::error;
 use tracing_subscriber::fmt::format::FmtSpan;
 use uuid::Uuid;
+
+static DYNAMO_DB_CLIENT: OnceCell<Client> = OnceCell::const_new();
+
+async fn get_global_client() -> &'static Client {
+    DYNAMO_DB_CLIENT
+        .get_or_init(|| async {
+            // if we are running in a cargo-lambda watch environment, use a local DynamoDB instance
+            // otherwise we expect to be within real AWS
+            if std::env::var("CARGO_HOME").is_ok() {
+                let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    // DynamoDB run locally uses port 8000 by default.
+                    .endpoint_url("http://localhost:8000")
+                    .load()
+                    .await;
+                let dynamodb_local_config =
+                    aws_sdk_dynamodb::config::Builder::from(&config).build();
+
+                aws_sdk_dynamodb::Client::from_conf(dynamodb_local_config)
+            } else {
+                let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+                Client::new(&config)
+            }
+        })
+        .await
+}
 
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     // Extract some useful information from the request
@@ -32,16 +55,18 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     let input = match event.body() {
         Body::Empty => "",
         Body::Text(text) => text.as_str(),
-        Body::Binary(_) => unimplemented!(),
+        _ => {
+            return error_415(
+                UnsupportedBodyError("Non-text inputs are not accepted"),
+                aws_request_id,
+            )
+        }
     }
     .as_bytes();
 
-    let output = SinkOutput {};
+    let output = SinkOutputWriter {};
 
-    let external_conditions =
-        weather_data_to_vec(BufReader::new(Cursor::new(include_str!("./weather.epw")))).ok();
-
-    let input = match resolve_products(input) {
+    let input = match resolve_products(input, get_global_client().await).await {
         Ok(input) => input,
         Err(e) => {
             return if let ResolvePcdbProductsError::InvalidRequest(_) = e {
@@ -53,7 +78,7 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         }
     };
 
-    let resp = match run_project(input, output, external_conditions, None, &ProjectFlags::FHS_COMPLIANCE) {
+    let resp = match run_wrappers(input, output, None, None, &FhsFlags::FHS_COMPLIANCE, false, false, false, &[]) {
         Ok(Some(resp)) => Response::builder()
             .status(200)
             .header("Content-Type", "application/json")
@@ -115,7 +140,11 @@ fn main() -> Result<(), Error> {
             dsn,
             ClientOptions {
                 release: sentry::release_name!(),
-                environment: Some(option_env!("SENTRY_ENVIRONMENT").unwrap_or("development").into()),
+                environment: Some(
+                    option_env!("SENTRY_ENVIRONMENT")
+                        .unwrap_or("development")
+                        .into(),
+                ),
                 ..Default::default()
             },
         ))),
@@ -132,6 +161,13 @@ fn main() -> Result<(), Error> {
         .block_on(async { run(service_fn(function_handler)).await })?;
 
     Ok(())
+}
+
+fn error_415<E>(e: E, aws_request_id: Option<String>) -> Result<Response<Body>, Error>
+where
+    E: StdError,
+{
+    error_x(e, 415, aws_request_id)
 }
 
 fn error_422<E>(e: E, aws_request_id: Option<String>) -> Result<Response<Body>, Error>
@@ -167,6 +203,7 @@ fn extract_aws_request_id(event: &Request) -> Option<String> {
         RequestContext::ApiGatewayV1(ApiGatewayProxyRequestContext { request_id, .. }) => {
             request_id
         }
+        _ => None,
     }
 }
 
@@ -174,13 +211,17 @@ fn extract_aws_request_id(event: &Request) -> Option<String> {
 #[error("Error resolving products from PCDB: {0}")]
 struct ResolveProductError(String);
 
+#[derive(Debug, Error)]
+#[error("{0}")]
+struct UnsupportedBodyError(&'static str);
+
 /// This output uses a shared string that individual "file" writers (the FileLikeStringWriter type)
 /// can write to - this string can then be used as the response body for the Lambda.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
-struct LambdaOutput(Arc<Mutex<String>>);
+struct LambdaOutputWriter(Arc<Mutex<String>>);
 
-impl LambdaOutput {
+impl LambdaOutputWriter {
     #[allow(dead_code)]
     fn new() -> Self {
         Self(Arc::new(Mutex::new(String::with_capacity(
@@ -190,7 +231,7 @@ impl LambdaOutput {
     }
 }
 
-impl Output for LambdaOutput {
+impl OutputWriter for LambdaOutputWriter {
     fn writer_for_location_key(
         &self,
         location_key: &str,
@@ -204,18 +245,22 @@ impl Output for LambdaOutput {
     }
 }
 
-impl Output for &LambdaOutput {
+impl OutputWriter for &LambdaOutputWriter {
     fn writer_for_location_key(
         &self,
         location_key: &str,
         file_extension: &str,
     ) -> anyhow::Result<impl Write> {
-        <LambdaOutput as Output>::writer_for_location_key(self, location_key, file_extension)
+        <LambdaOutputWriter as OutputWriter>::writer_for_location_key(
+            self,
+            location_key,
+            file_extension,
+        )
     }
 }
 
-impl From<LambdaOutput> for Body {
-    fn from(value: LambdaOutput) -> Self {
+impl From<LambdaOutputWriter> for Body {
+    fn from(value: LambdaOutputWriter) -> Self {
         Arc::try_unwrap(value.0).unwrap().into_inner().into()
     }
 }
